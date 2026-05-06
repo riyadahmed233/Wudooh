@@ -87,9 +87,17 @@ export const browserName: Browser | null = ((): Browser | null => {
     return null
 })()
 
-export const isChromium: boolean = ((): boolean => {
-    return browserName === "chrome" || browserName === "edge" || browserName === "opera"
-})()
+export const isChromium: boolean = typeof chrome !== "undefined" &&
+    !!chrome.runtime &&
+    !!chrome.storage
+
+const hasChromiumTabs: boolean = isChromium && !!chrome.tabs
+
+const isFirefoxExtension: boolean = typeof browser !== "undefined" &&
+    !!browser.runtime &&
+    !!browser.storage
+
+const hasFirefoxTabs: boolean = isFirefoxExtension && !!browser.tabs
 
 /**
  * Represents a site that uses different settings from the global settings
@@ -264,7 +272,53 @@ export const DefaultWudoohStorage: WudoohStorage = {
     customFonts: []
 }
 
-export const runtime: (typeof chrome.runtime | typeof browser.runtime) = (() => isChromium ? chrome.runtime : browser.runtime)()
+const BuiltInFontFiles: { [fontName: string]: string } = {
+    "Aldhabi": "Aldhabi.woff2",
+    "Almarai": "Almarai.woff2",
+    "Amiri": "Amiri.woff2",
+    "Amiri Quran": "AmiriQuran.woff2",
+    "Andalus": "Andalus.woff2",
+    "Arabic Typesetting": "ArabicTypesetting.woff2",
+    "Aref Ruqaa": "ArefRuqaa.woff2",
+    "Cairo": "Cairo.woff2",
+    "Changa": "Changa.woff2",
+    "Droid Arabic Naskh": "DroidArabicNaskh.woff2",
+    "Dubai": "Dubai.woff2",
+    "El Messiri": "ElMessiri.woff2",
+    "Harmattan": "Harmattan.woff2",
+    "Jomhuria": "Jomhuria.woff2",
+    "Katibeh": "Katibeh.woff2",
+    "Lalezar": "Lalezar.woff2",
+    "Lateef": "Lateef.woff2",
+    "Lemonada": "Lemonada.woff2",
+    "Mada": "Mada.woff2",
+    "Markazi Text": "MarkaziText.woff2",
+    "Mehr Nastaliq": "MehrNastaliq.woff2",
+    "Mirza": "Mirza.woff2",
+    "Neo Sans Arabic": "NeoSansArabic.woff2",
+    "Noto Kufi Arabic": "NotoKufiArabic.woff2",
+    "Noto Naskh Arabic": "NotoNaskhArabic.woff2",
+    "Noto Nastaliq Urdu": "NotoNastaliqUrdu.woff2",
+    "Noto Sans Arabic": "NotoSansArabic.woff2",
+    "Rakkas": "Rakkas.woff2",
+    "Reem Kufi": "ReemKufi.woff2",
+    "Rooznameh": "Rooznameh.woff2",
+    "Sahl Naskh": "SahlNaskh.woff2",
+    "Scheherazade": "Scheherazade.woff2",
+    "Shakstah": "Shakstah.woff2",
+    "Simplified Arabic": "SimplifiedArabic.woff2",
+    "Tajawal": "Tajawal.woff2",
+    "Traditional Arabic": "TraditionalArabic.woff2",
+    "Urdu Typesetting": "UrduTypesetting.woff2"
+}
+
+const injectedBuiltInFonts: Set<string> = new Set()
+
+export const runtime: (typeof chrome.runtime | typeof browser.runtime) = (() => {
+    if (isChromium) return chrome.runtime
+    if (isFirefoxExtension) return browser.runtime
+    return {} as typeof chrome.runtime
+})()
 
 // TODO: Below abstractions can be fully Promise calling if using MV3
 
@@ -273,15 +327,25 @@ export const runtime: (typeof chrome.runtime | typeof browser.runtime) = (() => 
  */
 export const sync = {
     async get(keys: Array<WudoohKeysType> | WudoohKeysType): Promise<WudoohStorage> {
-        return new Promise<WudoohStorage>(resolve => {
-            if (isChromium) chrome.storage.sync.get(keys, storage => resolve(storage as WudoohStorage))
-            else browser.storage.sync.get(keys).then(storage => resolve(storage as WudoohStorage))
+        return new Promise<WudoohStorage>((resolve, reject) => {
+            if (isChromium) chrome.storage.sync.get(keys, storage => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve(storage as WudoohStorage)
+            })
+            else if (isFirefoxExtension) browser.storage.sync.get(keys).then(storage => resolve(storage as WudoohStorage))
+            else reject(new Error("No extension storage API is available"))
         })
     },
     async set(wudoohStorage: WudoohStorage): Promise<void> {
-        return new Promise<void>(resolve => {
-            if (isChromium) chrome.storage.sync.set(wudoohStorage, () => resolve())
-            else browser.storage.sync.set(wudoohStorage).then(() => resolve())
+        return new Promise<void>((resolve, reject) => {
+            if (isChromium) chrome.storage.sync.set(wudoohStorage, () => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve()
+            })
+            else if (isFirefoxExtension) browser.storage.sync.set(wudoohStorage).then(() => resolve())
+            else reject(new Error("No extension storage API is available"))
         })
     },
     onChanged(callback: (changedKeys: Array<keyof WudoohStorage>, oldStorage: WudoohStorage, newStorage: WudoohStorage) => void): void {
@@ -306,7 +370,7 @@ export const sync = {
             if (!chrome.storage.onChanged.hasListener(listener)) {
                 chrome.storage.onChanged.addListener(listener)
             }
-        } else {
+        } else if (isFirefoxExtension) {
             browser.storage.onChanged.addListener((changes: { [p: string]: browser.storage.StorageChange }, areaName: string): void => {
                 // TODO: Implement!
             })
@@ -319,26 +383,43 @@ export const sync = {
  */
 export const tabs = {
     async create(url: string): Promise<Tab> {
-        return new Promise<Tab>(resolve => {
-            if (isChromium) chrome.tabs.create({url: url}, tab => resolve(tab))
-            else browser.tabs.create({url: url}).then(tab => resolve(tab))
+        return new Promise<Tab>((resolve, reject) => {
+            if (hasChromiumTabs) chrome.tabs.create({url: url}, tab => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve(tab)
+            })
+            else if (hasFirefoxTabs) browser.tabs.create({url: url}).then(tab => resolve(tab))
+            else reject(new Error("No extension tabs API is available"))
         })
     },
     async queryAllTabs(): Promise<Array<Tab>> {
-        return new Promise<Array<Tab>>(resolve => {
-            if (isChromium) chrome.tabs.query({}, tabs => resolve(tabs))
-            else browser.tabs.query({}).then(tabs => resolve(tabs))
+        return new Promise<Array<Tab>>((resolve, reject) => {
+            if (hasChromiumTabs) chrome.tabs.query({}, tabs => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve(tabs)
+            })
+            else if (hasFirefoxTabs) browser.tabs.query({}).then(tabs => resolve(tabs))
+            else reject(new Error("No extension tabs API is available"))
         })
     },
     async queryCurrentTab(): Promise<Array<Tab>> {
-        return new Promise<Array<Tab>>(resolve => {
-            if (isChromium) chrome.tabs.query({active: true, currentWindow: true}, tabs => resolve(tabs))
-            else browser.tabs.query({active: true, currentWindow: true}).then(tabs => resolve(tabs))
+        return new Promise<Array<Tab>>((resolve, reject) => {
+            if (hasChromiumTabs) chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve(tabs)
+            })
+            else if (hasFirefoxTabs) browser.tabs.query({active: true, currentWindow: true}).then(tabs => resolve(tabs))
+            else reject(new Error("No extension tabs API is available"))
         })
     },
     sendMessage(tabId: number, message: Message): void {
-        if (isChromium) chrome.tabs.sendMessage(tabId, message)
-        else browser.tabs.sendMessage(tabId, message)
+        if (hasChromiumTabs) chrome.tabs.sendMessage(tabId, message, () => {
+            void chrome.runtime.lastError
+        })
+        else if (hasFirefoxTabs) browser.tabs.sendMessage(tabId, message)
     },
     async sendMessageAllTabs(message: Message): Promise<void> {
         (await this.queryAllTabs()).forEach((tab: Tab): void => {
@@ -381,12 +462,33 @@ export async function injectCustomFonts(customFonts: Array<CustomFont>): Promise
     customFontsStyle = document.createElement("style")
     customFontsStyle.id = "wudoohCustomFontsStyle"
     customFonts.forEach((customFont: CustomFont): void => {
-        if (!!customFontsStyle && !!customFontsStyle.textContent) {
-            customFontsStyle.textContent = customFontsStyle.textContent.concat(CustomFont.injectCSS(customFont))
+        if (!!customFontsStyle) {
+            customFontsStyle.textContent = (customFontsStyle.textContent ?? "").concat(CustomFont.injectCSS(customFont))
         }
     })
     document.head.append(customFontsStyle)
     return customFonts
+}
+
+export async function injectBuiltInFont(fontName: string): Promise<void> {
+    const fileName: string | undefined = BuiltInFontFiles[fontName]
+    if (!fileName || injectedBuiltInFonts.has(fontName)) return
+
+    const fontUrl: string = runtime.getURL(`fonts/${fileName}`)
+    if (typeof FontFace !== "undefined" && !!document.fonts) {
+        const response: Response = await fetch(fontUrl)
+        if (!response.ok) throw new Error(`Failed to load font ${fontName}: ${response.status}`)
+        const fontData: ArrayBuffer = await response.arrayBuffer()
+        const fontFace: FontFace = new FontFace(fontName, fontData)
+        await fontFace.load()
+        document.fonts.add(fontFace)
+    } else {
+        const builtInFontsStyle: HTMLStyleElement = document.createElement("style")
+        builtInFontsStyle.id = `wudoohBuiltInFont-${fontName.replace(/\s+/g, "-")}`
+        builtInFontsStyle.textContent = `@font-face { font-family: '${fontName}'; font-style: normal; font-weight: normal; src: url('${fontUrl}') format('woff2'); }`
+        document.head.append(builtInFontsStyle)
+    }
+    injectedBuiltInFonts.add(fontName)
 }
 
 /**
