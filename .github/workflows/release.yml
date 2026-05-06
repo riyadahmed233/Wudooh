@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v3.0.0"
+        required: true
+        default: "v3.0.0"
+      draft:
+        description: "Create the release as a draft"
+        required: true
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark the release as a prerelease"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  chrome:
+    name: Build Chrome release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+      RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Chrome package
+        run: npm run package:chrome
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" Wudooh-Chrome-*.zip --clobber
+          else
+            args=(
+              "$RELEASE_TAG"
+              Wudooh-Chrome-*.zip
+              --title "Wudooh ${RELEASE_TAG}"
+              --generate-notes
+              --target "$GITHUB_SHA"
+            )
+
+            if [ "$RELEASE_DRAFT" = "true" ]; then
+              args+=(--draft)
+            fi
+
+            if [ "$RELEASE_PRERELEASE" = "true" ]; then
+              args+=(--prerelease)
+            fi
+
+            gh release create "${args[@]}"
+          fi

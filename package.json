@@ -23,7 +23,7 @@
     "minifyAll": "run-p minifyMain minifyPopup minifyShared minifyBackground minifyCustomFonts",
     "firefox": "node scripts/firefox",
     "chrome": "npm run package:chrome",
-    "zip:chrome": "rm -rf builddir && rm -f Wudooh-Chrome-3.0.0.zip && mkdir -p builddir/Wudooh-Chrome-3.0.0 && cp -R dist/. builddir/Wudooh-Chrome-3.0.0/ && (cd builddir && zip -qr ../Wudooh-Chrome-3.0.0.zip Wudooh-Chrome-3.0.0) && rm -rf builddir",
+    "zip:chrome": "node scripts/package-chrome.mjs",
     "package:chrome": "run-s clean build-new zip:chrome",
     "buildChrome": "npm run package:chrome",
     "buildFirefox": "run-s minifyAll firefox",
